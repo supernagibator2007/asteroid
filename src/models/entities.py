@@ -69,14 +69,13 @@ class Ship:
 
 @dataclass
 class Asteroid:
-    """Представляет астероид с неровным многоугольным контуром."""
+    """Представляет астероид единого размера с неровным многоугольным контуром."""
 
     x: float
     y: float
     vx: float
     vy: float
-    radius: float
-    size_level: int  # 3 — большой, 2 — средний, 1 — малый.
+    radius: float = 30.0
     rotation_angle: float = 0.0
     rotation_speed: float = 0.0
     vertices: list[tuple[float, float]] = field(default_factory=list)

@@ -19,16 +19,9 @@ class GameState(str, Enum):
 class GameModel:
     """Хранит состояние игры и вычисляет физику, движение и столкновения."""
 
-    SIZE_RADII: dict[int, float] = {
-        3: 44.0,
-        2: 26.0,
-        1: 14.0,
-    }
-    SIZE_POINTS: dict[int, int] = {
-        3: 20,
-        2: 50,
-        1: 100,
-    }
+    ASTEROID_RADIUS: float = 30.0
+    TARGET_ASTEROID_COUNT: int = 6
+    POINTS_PER_ASTEROID: int = 1
 
     def __init__(self, width: int, height: int) -> None:
         """Инициализирует модель мира для заданных размеров экрана.
@@ -50,25 +43,23 @@ class GameModel:
         self.state = GameState.MENU
         self.score = 0
         self.lives = 3
-        self.wave = 1
         self._fire_timer = 0.0
 
         self.ship = Ship(x=width / 2.0, y=height / 2.0)
         self.asteroids: list[Asteroid] = []
         self.bullets: list[Bullet] = []
 
-        self._spawn_wave(count=4)
+        self._ensure_asteroids(self.TARGET_ASTEROID_COUNT)
 
     def start_new_game(self) -> None:
-        """Сбрасывает прогресс и запускает новую игру."""
+        """Сбрасывает прогресс и запускает непрерывную игру."""
         self.score = 0
         self.lives = 3
-        self.wave = 1
         self._fire_timer = 0.0
         self.bullets.clear()
         self.asteroids.clear()
         self._reset_ship(invulnerable_time=2.0)
-        self._spawn_wave(count=4)
+        self._ensure_asteroids(self.TARGET_ASTEROID_COUNT)
         self.state = GameState.PLAYING
 
     def toggle_pause(self) -> None:
@@ -86,33 +77,34 @@ class GameModel:
             invulnerable_timer=invulnerable_time,
         )
 
-    def _spawn_wave(self, count: int) -> None:
-        """Создаёт волну крупных астероидов вдали от центра с кораблём."""
+    def _spawn_single_asteroid(self) -> Asteroid:
+        """Создаёт один астероид стандартного размера вдали от центра."""
         safe_zone_radius = 130.0
         center_x = self.width / 2.0
         center_y = self.height / 2.0
 
-        for _ in range(count):
-            while True:
-                x = random.uniform(0.0, float(self.width))
-                y = random.uniform(0.0, float(self.height))
-                # Евклидово расстояние до центра: d = sqrt((x - cx)^2 + (y - cy)^2).
-                if math.hypot(x - center_x, y - center_y) >= safe_zone_radius:
-                    break
+        while True:
+            x = random.uniform(0.0, float(self.width))
+            y = random.uniform(0.0, float(self.height))
+            # Евклидово расстояние до центра: d = sqrt((x - cx)^2 + (y - cy)^2).
+            if math.hypot(x - center_x, y - center_y) >= safe_zone_radius:
+                break
 
-            angle = random.uniform(0.0, 2.0 * math.pi)
-            speed = random.uniform(55.0, 130.0)
-            self.asteroids.append(
-                Asteroid(
-                    x=x,
-                    y=y,
-                    vx=math.cos(angle) * speed,
-                    vy=math.sin(angle) * speed,
-                    radius=self.SIZE_RADII[3],
-                    size_level=3,
-                    rotation_speed=random.uniform(-1.6, 1.6),
-                )
-            )
+        angle = random.uniform(0.0, 2.0 * math.pi)
+        speed = random.uniform(60.0, 135.0)
+        return Asteroid(
+            x=x,
+            y=y,
+            vx=math.cos(angle) * speed,
+            vy=math.sin(angle) * speed,
+            radius=self.ASTEROID_RADIUS,
+            rotation_speed=random.uniform(-1.6, 1.6),
+        )
+
+    def _ensure_asteroids(self, target_count: int) -> None:
+        """Поддерживает заданное количество астероидов на поле."""
+        while len(self.asteroids) < target_count:
+            self.asteroids.append(self._spawn_single_asteroid())
 
     def try_fire(self) -> None:
         """Выпускает снаряд из носа корабля, если прошёл кулдаун."""
@@ -143,7 +135,6 @@ class GameModel:
     ) -> None:
         """Выполняет один шаг симуляции модели."""
         if self.state != GameState.PLAYING:
-            # В меню или паузе астероиды могут лениво дрейфовать только в меню.
             if self.state == GameState.MENU:
                 for asteroid in self.asteroids:
                     asteroid.update(dt * 0.35, self.width, self.height)
@@ -172,10 +163,7 @@ class GameModel:
         ]
 
         self._handle_collisions()
-
-        if not self.asteroids:
-            self.wave += 1
-            self._spawn_wave(count=min(10, 3 + self.wave))
+        self._ensure_asteroids(self.TARGET_ASTEROID_COUNT)
 
     @staticmethod
     def _circles_collide(
@@ -187,32 +175,6 @@ class GameModel:
         dy = y1 - y2
         radius_sum = r1 + r2
         return (dx * dx + dy * dy) <= (radius_sum * radius_sum)
-
-    def _split_asteroid(self, asteroid: Asteroid) -> None:
-        """Начисляет очки и дробит астероид на два меньших при наличии уровня."""
-        self.score += self.SIZE_POINTS.get(asteroid.size_level, 20)
-        next_level = asteroid.size_level - 1
-        if next_level < 1:
-            return
-
-        next_radius = self.SIZE_RADII[next_level]
-        for sign in (-1.0, 1.0):
-            # Отклоняем вектор скорости под углом +-25..45 градусов при расколе.
-            deflection = sign * random.uniform(0.45, 0.8)
-            base_angle = math.atan2(asteroid.vy, asteroid.vx) + deflection
-            speed = math.hypot(asteroid.vx, asteroid.vy) * random.uniform(1.1, 1.35)
-            speed = max(70.0, min(240.0, speed))
-            self.asteroids.append(
-                Asteroid(
-                    x=asteroid.x,
-                    y=asteroid.y,
-                    vx=math.cos(base_angle) * speed,
-                    vy=math.sin(base_angle) * speed,
-                    radius=next_radius,
-                    size_level=next_level,
-                    rotation_speed=random.uniform(-2.2, 2.2),
-                )
-            )
 
     def _handle_collisions(self) -> None:
         """Обрабатывает попадания снарядов по астероидам и столкновения с кораблём."""
@@ -233,6 +195,7 @@ class GameModel:
                     asteroid.radius,
                 ):
                     destroyed_asteroid_indices.add(idx)
+                    self.score += self.POINTS_PER_ASTEROID
                     hit = True
                     break
             if not hit:
@@ -241,13 +204,11 @@ class GameModel:
         self.bullets = surviving_bullets
 
         if destroyed_asteroid_indices:
-            new_asteroids: list[Asteroid] = []
-            for idx, asteroid in enumerate(self.asteroids):
-                if idx in destroyed_asteroid_indices:
-                    self._split_asteroid(asteroid)
-                else:
-                    new_asteroids.append(asteroid)
-            self.asteroids = new_asteroids
+            self.asteroids = [
+                asteroid
+                for idx, asteroid in enumerate(self.asteroids)
+                if idx not in destroyed_asteroid_indices
+            ]
 
         if self.ship.invulnerable_timer <= 0.0:
             for asteroid in self.asteroids:
